@@ -10,7 +10,7 @@ use skrifa::{
 };
 use unicode_bidi::BidiInfo;
 
-use crate::{CID_FONT, Error, Font, n, pdf_string, pdf_utf16_string, win_ansi};
+use crate::{CID_FONT, Error, Font, TextDirection, n, pdf_string, pdf_utf16_string, win_ansi};
 
 include!(concat!(env!("OUT_DIR"), "/arabic_fonts.rs"));
 
@@ -176,10 +176,11 @@ pub(crate) struct Layout {
 }
 
 /// Positions are in 1/1000 em, matching the Type3 font matrix.
-pub(crate) fn layout(font: Font, text: &str) -> Result<Layout, Error> {
+pub(crate) fn layout(font: Font, text: &str, direction: TextDirection) -> Result<Layout, Error> {
     if text.len() > MAX_TEXT_BYTES {
         return Err(Error("Arabic PDF text exceeds the 128 KiB per-line limit".into()));
     }
+    let direction = if direction == TextDirection::Context { direction.resolve(text) } else { direction };
     let face = face(bold(font))?;
     let raw = face.font()?;
     let shaper = face.data.shaper(&raw).instance(Some(&face.instance)).build();
@@ -190,7 +191,7 @@ pub(crate) fn layout(font: Font, text: &str) -> Result<Layout, Error> {
     let scale = 1000.0 / units as f32;
     let single_line: String = text.chars().map(|ch| if is_paragraph_break(ch) { ' ' } else { ch }).collect();
     let text = single_line.as_str();
-    let bidi = BidiInfo::new(text, None);
+    let bidi = BidiInfo::new(text, direction.level());
     let mut layout = Layout { items: Vec::new(), width: 0.0 };
     for para in &bidi.paragraphs {
         let (levels, runs) = bidi.visual_runs(para, para.range.clone());
@@ -276,8 +277,8 @@ pub(crate) fn layout(font: Font, text: &str) -> Result<Layout, Error> {
     Ok(layout)
 }
 
-pub(crate) fn vertical_extents(font: Font, text: &str) -> Result<(f32, f32), Error> {
-    let layout = layout(font, text)?;
+pub(crate) fn vertical_extents(font: Font, text: &str, direction: TextDirection) -> Result<(f32, f32), Error> {
+    let layout = layout(font, text, direction)?;
     let face = face(bold(font))?;
     let raw = face.font()?;
     let metrics = raw.glyph_metrics(Size::new(1000.0), skrifa::instance::LocationRef::new(face.instance.coords()));
@@ -315,6 +316,32 @@ pub(crate) fn vertical_extents(font: Font, text: &str) -> Result<(f32, f32), Err
 /// kana, bopomofo, ideographs and full-width forms. Anything else uncovered fails the export.
 fn cid_covers(ch: char) -> bool {
     matches!(ch, '\u{3000}'..='\u{312F}' | '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}' | '\u{FF00}'..='\u{FFEF}')
+}
+
+/// Bidi reordering for standard-font text requires no optional Arabic font.
+pub(crate) fn latin_visual(text: &str, direction: TextDirection) -> Result<Cow<'_, str>, Error> {
+    if direction != TextDirection::RightToLeft && !text.chars().any(is_control) {
+        return Ok(Cow::Borrowed(text));
+    }
+    if text.len() > MAX_TEXT_BYTES {
+        return Err(Error("Bidirectional PDF text exceeds the 128 KiB per-line limit".into()));
+    }
+    let single_line: String = text.chars().map(|ch| if is_paragraph_break(ch) { ' ' } else { ch }).collect();
+    let text = single_line.as_str();
+    let bidi = BidiInfo::new(text, direction.level());
+    let mut out = String::with_capacity(text.len());
+    for para in &bidi.paragraphs {
+        let (levels, runs) = bidi.visual_runs(para, para.range.clone());
+        for run in runs {
+            let part = text.get(run.clone()).unwrap_or_default();
+            if levels.get(run.start).is_some_and(|level| level.is_rtl()) {
+                out.extend(part.chars().rev().filter(|ch| !is_control(*ch)).map(mirror_ansi));
+            } else {
+                out.extend(part.chars().filter(|ch| !is_control(*ch)));
+            }
+        }
+    }
+    Ok(Cow::Owned(out))
 }
 
 // The mirrored characters representable by WinAnsi. HarfRust handles embedded glyphs.
@@ -412,8 +439,8 @@ impl Subset {
         Ok(index)
     }
 
-    pub(crate) fn text(&mut self, font: Font, text: &str, size: f32) -> Result<String, Error> {
-        let layout = layout(font, text)?;
+    pub(crate) fn text(&mut self, font: Font, text: &str, size: f32, direction: TextDirection) -> Result<String, Error> {
+        let layout = layout(font, text, direction)?;
         let mut out = format!("/Span << /ActualText {} >> BDC\nBT\n", unicode_string(text, true));
         for item in layout.items {
             match item {
