@@ -52,8 +52,8 @@ Cell text now uses shared Unicode bidi layout while retaining logical source ind
   beyond Arabic still needs verification. **Sheet Right-to-Left**
   (`view.rightToLeft`, Page Layout › Sheet Options, XLSX `rightToLeft`, `.xls` WINDOW2 fRightToLeft) mirrors the grid (#146):
   column A and the row headers on the right, the vertical scrollbar on the left; hit-testing,
-  arrow keys, editor, popups and floating objects follow; text follows its cell reading direction inside its box
-  (no bidi), and the sheet tabs, horizontal scrollbar and printing/PDF are not mirrored yet.
+  arrow keys, editor, popups and floating objects follow; text follows its cell reading direction inside its box,
+  and the sheet tabs, horizontal scrollbar and printing/PDF are not mirrored yet.
   Text boxes and shapes keep their paragraphs' right-to-left direction (`a:pPr rtl`) through XLSX
   save, though GridCraft still draws that text left to right. IME input goes
   through egui/winit and is unverified for Chinese, Japanese and Korean.
