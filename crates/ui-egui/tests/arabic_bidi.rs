@@ -1,6 +1,7 @@
 //! Spreadsheet text remains logical while the shared renderer lays it out visually.
 
 use egui::{Event, Key, Modifiers, Shape, vec2};
+use egui_kittest::kittest::Queryable as _;
 use gridcraft_engine::{
     Session,
     core::{CellRef, Value},
@@ -68,8 +69,13 @@ fn marked_arabic_survives_copy_paste_commit_undo_and_xlsx() {
     let text = "مَرْحَبًا 123 (ABC)";
     for formula_bar in [false, true] {
         let mut h = app(text, "RightToLeft", false);
-        h.state_mut().begin_edit(None, formula_bar);
+        if formula_bar {
+            h.get_by_label(text).click();
+        } else {
+            h.key_press(Key::F2);
+        }
         h.run_steps(3);
+        assert_eq!(h.state().editor.as_ref().map(|e| e.from_formula_bar), Some(formula_bar));
         h.key_press_modifiers(Modifiers::COMMAND, Key::A);
         h.run_steps(1);
         h.input_mut().events.push(Event::Copy);
