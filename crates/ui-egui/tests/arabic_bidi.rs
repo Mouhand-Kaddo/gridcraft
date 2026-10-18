@@ -98,3 +98,19 @@ fn marked_arabic_survives_copy_paste_commit_undo_and_xlsx() {
         assert_eq!(reopened.active().unwrap().value(CellRef::new(1, 1)), Value::text(replacement));
     }
 }
+
+#[test]
+fn conditional_reading_order_reaches_the_formula_bar() {
+    let text = "ABC مرحبا 123";
+    for (rule_style, rtl) in [(json!({"align": {"reading_order": "RightToLeft"}}), true), (json!({"font": {"bold": true}}), false)] {
+        let mut h = app(text, "LeftToRight", false);
+        h.state_mut().session.execute("home.conditionalFormat", json!({"range": "B2", "rule": {"type": "noBlanks", "style": rule_style}})).unwrap();
+        h.run_steps(2);
+        let mut painted = Vec::new();
+        for shape in &h.output().shapes {
+            text_shapes(&shape.shape, text, &mut painted);
+        }
+        let formula_bar = painted.iter().min_by(|a, b| a.pos.y.total_cmp(&b.pos.y)).unwrap();
+        assert_eq!(formula_bar.galley.rows[0].paragraph_level % 2 == 1, rtl);
+    }
+}

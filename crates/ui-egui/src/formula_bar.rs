@@ -165,6 +165,13 @@ fn cell_reading_order(app: &SheetApp, sheet_index: usize, cell: gridcraft_engine
     let sheet = doc.wb.sheet(sheet_index)?;
     let cell = sheet.merge_at(cell).map_or(cell, |range| range.start);
     let base = doc.wb.styles.get(sheet.style_id(cell)).align.reading_order;
+    let a_rule_sets_reading_order = sheet
+        .cond_formats
+        .iter()
+        .any(|cf| cf.ranges.iter().any(|r| r.contains(cell)) && cf.rule.style().is_some_and(|style| style.align.reading_order.is_some()));
+    if !a_rule_sets_reading_order {
+        return base;
+    }
     gridcraft_engine::cf::CfCache::default()
         .look(&doc.wb, sheet_index, cell)
         .and_then(|look| look.style)
