@@ -34,20 +34,37 @@ fn editing(text: &str, formula_bar: bool) -> egui_kittest::Harness<'static, Shee
     h
 }
 
-/// The right edge of the in-cell editor's text: the lowest painted copy, below the formula bar.
-fn cell_editor_text_right_edge(h: &egui_kittest::Harness<'static, SheetApp>, text: &str) -> Option<Pos2> {
-    fn collect(shape: &Shape, text: &str, out: &mut Vec<Pos2>) {
+/// The in-cell editor's laid-out text and its screen position: the lowest painted copy, below the formula bar.
+fn cell_editor_galley(h: &egui_kittest::Harness<'static, SheetApp>, text: &str) -> Option<(Pos2, std::sync::Arc<egui::Galley>)> {
+    fn collect(shape: &Shape, text: &str, out: &mut Vec<(Pos2, std::sync::Arc<egui::Galley>)>) {
         match shape {
-            Shape::Text(s) if s.galley.text() == text => out.push(s.pos + vec2(s.galley.rect.max.x - 1.0, s.galley.rect.center().y)),
+            Shape::Text(s) if s.galley.text() == text => out.push((s.pos, s.galley.clone())),
             Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, text, out)),
             _ => {}
         }
     }
-    let mut edges = Vec::new();
+    let mut found = Vec::new();
     for clipped in &h.output().shapes {
-        collect(&clipped.shape, text, &mut edges);
+        collect(&clipped.shape, text, &mut found);
     }
-    edges.into_iter().max_by(|a, b| a.y.total_cmp(&b.y))
+    found.into_iter().max_by(|a, b| a.0.y.total_cmp(&b.0.y))
+}
+
+fn cell_editor_text_right_edge(h: &egui_kittest::Harness<'static, SheetApp>, text: &str) -> Option<Pos2> {
+    cell_editor_galley(h, text).map(|(pos, galley)| pos + vec2(galley.rect.max.x - 1.0, galley.rect.center().y))
+}
+
+#[test]
+fn caret_after_typing_arabic_is_drawn_at_its_left_end() {
+    let mut h = editing("", false);
+    h.input_mut().events.push(Event::Text("بسم الله".into()));
+    h.run_steps(2);
+    let state = egui::text_edit::TextEditState::load(&h.ctx, egui::Id::new("gridcraft.cell_editor")).unwrap();
+    let caret = state.cursor.char_range().unwrap().primary;
+    assert_eq!(caret.index.0, "بسم الله".chars().count());
+    let (_, galley) = cell_editor_galley(&h, "بسم الله").unwrap();
+    let x = galley.pos_from_cursor(caret).min.x;
+    assert!(x <= galley.rect.min.x + 1.0, "caret at x={x}, text spans {:?}", galley.rect.x_range());
 }
 
 #[test]
