@@ -1039,7 +1039,9 @@ fn is_zero_width(c: char) -> bool {
             | '\u{06DF}'..='\u{06E4}'
             | '\u{06E7}'..='\u{06E8}'
             | '\u{06EA}'..='\u{06ED}'
-            | '\u{08CA}'..='\u{08FF}'
+            | '\u{0897}'..='\u{089F}'
+            | '\u{08CA}'..='\u{08E1}'
+            | '\u{08E3}'..='\u{08FF}'
             | '\u{200B}'..='\u{200F}'
             | '\u{202A}'..='\u{202E}'
             | '\u{2060}'..='\u{2069}'
@@ -1050,11 +1052,13 @@ fn is_zero_width(c: char) -> bool {
 
 /// Width in ems of an Arabic-script character, measured from shaped Noto Sans Arabic, Noto Naskh
 /// Arabic and DejaVu Sans: joined letters average about half an em, word ligatures such as ﷺ and the
-/// rial sign about 1.2 em, and the bismillah ligature about 11 em.
+/// rial sign about 1.2 em, the honorific ligatures (U+FD40–FD4B) about 1.6 em, and the bismillah
+/// ligature about 11 em.
 fn arabic_em(c: char) -> Option<f32> {
     match c {
         '\u{FDFD}' => Some(11.0),
-        '\u{FDF0}'..='\u{FDFC}' => Some(1.2),
+        '\u{FD40}'..='\u{FD4B}' => Some(1.6),
+        '\u{FDF0}'..='\u{FDFC}' | '\u{FDFE}'..='\u{FDFF}' => Some(1.2),
         '\u{0600}'..='\u{06FF}' | '\u{0750}'..='\u{077F}' | '\u{0870}'..='\u{08FF}' | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFC}' => Some(0.48),
         _ => None,
     }
@@ -1189,6 +1193,8 @@ mod tests {
         let plain = approx_text_width("محمد يدرس في المدرسة", 11.0, false);
         assert_eq!(approx_text_width("مُحَمَّد يَدْرُسُ فِي الْمَدْرَسَةِ", 11.0, false), plain);
         assert_eq!(approx_text_width("\u{200F}محمد يدرس في المدرسة\u{200C}", 11.0, false), plain);
+        assert_eq!(approx_text_width("ب\u{0897}\u{0898}\u{089F}", 11.0, false), approx_text_width("ب", 11.0, false));
+        assert!(approx_text_width("\u{08E2}", 11.0, false) > 0.0, "the disputed end of ayah is a visible sign");
     }
 
     #[test]
@@ -1208,6 +1214,9 @@ mod tests {
         let em = |t: &str| approx_text_width(t, 72.0, false) / 96.0;
         assert!(em("\u{FDFD}") > 8.0);
         assert!(em("\u{FDFA}") > 1.0);
+        for honorific in ['\u{FD40}', '\u{FD4B}', '\u{FDFE}', '\u{FDFF}'] {
+            assert!(em(&honorific.to_string()) > 1.0, "U+{:04X}", u32::from(honorific));
+        }
         assert!(em("ب") < 0.6);
     }
 
