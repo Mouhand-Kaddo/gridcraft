@@ -251,7 +251,7 @@ fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-fn html_cell_css(wb: &Workbook, sh: &Sheet, c: CellRef, dir: CellDir) -> String {
+fn html_cell_css(wb: &Workbook, sh: &Sheet, c: CellRef, dir: CellDir, number: bool) -> String {
     let st = wb.styles.get(sh.style_id(c));
     let mut css = String::new();
     if st.font.bold {
@@ -268,12 +268,11 @@ fn html_cell_css(wb: &Workbook, sh: &Sheet, c: CellRef, dir: CellDir) -> String 
     {
         let _ = write!(css, "background:{h};");
     }
-    let v = sh.value(c);
     let align = match st.align.h {
         gridcraft_model::HAlign::Center => Some("center"),
         gridcraft_model::HAlign::Right => Some("right"),
         gridcraft_model::HAlign::Left => Some("left"),
-        _ if v.is_number() => Some(if sh.right_to_left { "left" } else { "right" }),
+        _ if number => Some(if sh.right_to_left { "left" } else { "right" }),
         _ if dir == CellDir::Auto => None,
         _ => Some("left"),
     };
@@ -295,8 +294,8 @@ enum CellDir {
 }
 
 impl CellDir {
-    fn of(sh: &Sheet, c: CellRef, text: &str) -> CellDir {
-        if sh.value(c).is_number() {
+    fn of(sh: &Sheet, number: bool, text: &str) -> CellDir {
+        if number {
             if sh.right_to_left { CellDir::Ltr } else { CellDir::Inherit }
         } else if sh.right_to_left || text.chars().any(is_right_to_left_letter) {
             CellDir::Auto
@@ -317,6 +316,11 @@ impl CellDir {
 /// Hebrew, Arabic, Syriac, Thaana, N'Ko and their presentation forms.
 fn is_right_to_left_letter(c: char) -> bool {
     matches!(c, '\u{0590}'..='\u{08FF}' | '\u{FB1D}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}')
+}
+
+/// A number, not formula text, is what the cell shows.
+fn shows_number(wb: &Workbook, sh: &Sheet, c: CellRef) -> bool {
+    sh.value(c).is_number() && crate::display::shown_formula(wb, sh, c).is_none()
 }
 
 fn table_dir(sh: &Sheet) -> &'static str {
@@ -356,8 +360,9 @@ pub(crate) fn range_html(wb: &Workbook, sheet: usize, r: RangeRef, plain_text: &
             // Use the visible selected cell, even when the merge's original anchor
             // is outside the range or hidden. This matches the plain-text copy.
             let text = crate::display::cell_text(wb, sh, c);
-            let dir = CellDir::of(sh, c, &text);
-            let css = html_cell_css(wb, sh, c, dir);
+            let number = shows_number(wb, sh, c);
+            let dir = CellDir::of(sh, number, &text);
+            let css = html_cell_css(wb, sh, c, dir, number);
             write!(out, "<td style=\"border:1px solid #d4d4d4;padding:2px 4px;white-space:pre-wrap;{css}\"{}{span}>", dir.attr()).ok()?;
             let mut chars = text.chars().peekable();
             while let Some(ch) = chars.next() {
@@ -429,8 +434,9 @@ pub fn to_html(wb: &Workbook, sheet: usize) -> Result<String> {
                     continue;
                 }
                 let text = crate::display::cell_text(wb, sh, c);
-                let dir = CellDir::of(sh, c, &text);
-                let css = html_cell_css(wb, sh, c, dir);
+                let number = shows_number(wb, sh, c);
+                let dir = CellDir::of(sh, number, &text);
+                let css = html_cell_css(wb, sh, c, dir, number);
                 let span = sh
                     .merges
                     .iter()
@@ -613,6 +619,23 @@ mod tests {
         assert!(cells[0].contains("dir=\"auto\"") && !cells[0].contains("text-align"), "{clip}");
         assert!(cells[1].contains("text-align:left;") && cells[1].contains("dir=\"auto\""), "{clip}");
         assert!(cells[3].contains("text-align:left;") && !cells[3].contains("dir="), "{clip}");
+    }
+
+    #[test]
+    fn html_export_aligns_shown_formulas_as_text() {
+        use gridcraft_core::Value;
+        use gridcraft_model::{Cell, Formula, HAlign};
+        let mut wb = book(false, &[("C1", Value::Number(5.0), HAlign::General)]);
+        let sh = wb.sheet_mut(0).unwrap();
+        sh.set_cell(CellRef::parse("A1").unwrap(), Cell { value: Value::Number(5.0), ..Cell::formula(Formula::new("'ورقة'!C1")) });
+        sh.set_cell(CellRef::parse("B1").unwrap(), Cell { value: Value::Number(5.0), ..Cell::formula(Formula::new("C1")) });
+        let html = to_html(&wb, 0).unwrap();
+        assert!(html.contains("<td style=\"text-align:right;\">5</td><td style=\"text-align:right;\">5</td>"), "results are numbers: {html}");
+        wb.sheet_mut(0).unwrap().show_formulas = true;
+        let html = to_html(&wb, 0).unwrap();
+        assert!(html.contains("<td style=\"\" dir=\"auto\">=ورقة!C1</td>"), "an Arabic formula follows its first letter: {html}");
+        assert!(html.contains("<td style=\"text-align:left;\">=C1</td>"), "a formula is text, not a number: {html}");
+        assert!(html.contains("<td style=\"text-align:right;\">5</td></tr>"), "a plain number stays a number: {html}");
     }
 
     #[test]
