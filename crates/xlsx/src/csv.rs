@@ -27,13 +27,55 @@ const CP1252: [u32; 32] = [
 /// Half-width katakana deliberately does not count: every CP932 single byte from `0xA1` to `0xDF`
 /// is a half-width katakana, and that range is `À`–`ß` and `¡`–`¿` in Windows-1252, so counting it
 /// would read `Straße` or `Ärger` as Japanese.
-///
-/// Kanji deliberately does not count either: Windows-1252 smart quotes around letters are valid
-/// CP932 pairs too (`‘a’b` is `0x91 0x61 0x92 0x62`, which decodes cleanly as `疎鍛`), so no
-/// pair-counting rule separates a kanji-only Japanese file from quoted Western text. A kanji-only
-/// CSV is read as Shift-JIS only when the encoding is named.
 fn has_kana(text: &str) -> bool {
     text.chars().any(|c| matches!(c, '\u{3040}'..='\u{30FF}'))
+}
+
+/// The CP932 evidence [`CsvEncoding::Auto`] needs when a clean decode holds no kana. A clean decode
+/// alone is not enough: Windows-1252 smart quotes and accented letters are valid CP932 pairs too
+/// (`‘a’b` is `0x91 0x61 0x92 0x62` and decodes as `疎鍛`), so counting pairs alone reads quoted
+/// Western text as Japanese. Two measurements separate the two:
+///
+/// - at least 80% of the non-ASCII bytes are consumed by valid double-byte pairs — a Japanese text
+///   is nearly all pairs, while a Windows-1252 word leaves its one-byte letters lone; and
+/// - valid CP932 pairs outnumber the "high byte + ASCII letter" readings a Windows-1252 word has.
+///   An accented letter followed by a letter is one of each, so `Prénom`, `Größe` and their kind
+///   stay balanced and keep the Windows-1252 reading, while a kanji-only CSV's dense pairs win:
+///   `東京都千代田区` is seven pairs against two such readings.
+///
+/// Two pairs are required, so a lone pair stays Windows-1252. A kanji-only file is therefore read
+/// as Shift-JIS when its pairs are dense; a two-character value whose trails both happen to be
+/// ASCII letters can still lose the coin toss and can be read by naming `shift_jis`.
+fn cp932_evidence(bytes: &[u8]) -> bool {
+    // Half-width katakana are single-byte CP932 characters in the same byte range as Windows-1252's
+    // Latin-1 punctuation and uppercase accents (`0xA1`–`0xDF`), so they are evidence neither way:
+    // they are left out of the ratio (half-width katakana alone never selects Shift-JIS — it has no
+    // pairs at all).
+    let is_ambiguous = |b: u8| matches!(b, 0xA1..=0xDF);
+    let high = bytes.iter().filter(|&&b| b >= 0x80 && !is_ambiguous(b)).count();
+    if high < 2 {
+        return false;
+    }
+    let mut pairs = 0usize;
+    let mut consumed = 0usize;
+    let mut i = 0;
+    while let Some(&b) = bytes.get(i) {
+        let lead = matches!(b, 0x81..=0x9F | 0xE0..=0xFC);
+        match bytes.get(i + 1) {
+            Some(&trail) if lead && matches!(trail, 0x40..=0x7E | 0x80..=0xFC) => {
+                pairs += 1;
+                consumed += 1; // the lead is always a high, non-ambiguous byte
+                if trail >= 0x80 && !is_ambiguous(trail) {
+                    consumed += 1;
+                }
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+    // The same high bytes read as a Windows-1252 character followed by a letter (`é` + `n`).
+    let accent_pairs = bytes.windows(2).filter(|w| w[0] >= 0x80 && w[1].is_ascii_alphabetic()).count();
+    pairs >= 2 && pairs > accent_pairs && consumed.saturating_mul(5) >= high.saturating_mul(4)
 }
 
 /// Whether text holds a CP932 private-use character (`U+E000`–`U+F8FF`). CP932 only produces
@@ -73,7 +115,8 @@ fn decode_utf16(bytes: &[u8], le: bool) -> String {
 }
 
 /// [`CsvEncoding::Auto`]: UTF-8/UTF-16 BOMs, else UTF-8, else Shift-JIS when the decoded text holds
-/// kana and no private-use characters, else Windows-1252 — today's fallback, so a file that isn't
+/// kana or its pairs are dense enough to be a kanji-only Japanese file ([`cp932_evidence`]), with
+/// no private-use characters, else Windows-1252 — today's fallback, so a file that isn't
 /// convincingly Japanese reads as before.
 fn decode_auto(bytes: &[u8]) -> (String, Option<CsvEncoding>) {
     if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
@@ -89,14 +132,13 @@ fn decode_auto(bytes: &[u8]) -> (String, Option<CsvEncoding>) {
     match std::str::from_utf8(bytes) {
         Ok(s) => (s.to_string(), Some(CsvEncoding::Utf8)),
         Err(_) => {
-            // Shift-JIS only for a *clean* CP932 decode that holds kana, with no private-use
+            // Shift-JIS only for a *clean* CP932 decode that looks Japanese: kana, or the dense
+            // double-byte pairs of a kanji-only file (see `cp932_evidence`), with no private-use
             // characters (the CP932 user-defined area, which real Japanese text doesn't use).
-            // Kanji alone is not enough: Windows-1252 smart quotes around letters form valid CP932
-            // pairs, so a kanji-only CSV is read as Shift-JIS only when named. Everything else
-            // keeps the historical Windows-1252 reading, so a Western file is never respelled as
-            // Japanese.
+            // Everything else keeps the historical Windows-1252 reading, so a Western file is
+            // never respelled as Japanese.
             let (shift_jis, had_errors) = encoding_rs::SHIFT_JIS.decode_without_bom_handling(bytes);
-            let japanese = has_kana(&shift_jis);
+            let japanese = has_kana(&shift_jis) || cp932_evidence(bytes);
             if !had_errors && japanese && !has_private_use(&shift_jis) {
                 (shift_jis.into_owned(), Some(CsvEncoding::ShiftJis))
             } else {

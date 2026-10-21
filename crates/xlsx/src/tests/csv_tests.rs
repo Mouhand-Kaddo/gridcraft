@@ -170,24 +170,32 @@ fn auto_does_not_steal_windows_1252() {
     }
 }
 
-/// A kanji-only CSV does not auto-detect: a clean CP932 decode of kanji is not proof of Japanese
-/// (see `windows_1252_smart_quotes_are_not_shift_jis`), so it is read as Windows-1252 unless the
-/// encoding is named — `shift_jis`/`cp932` then reads it correctly.
+/// A kanji-only CSV (no kana at all) still detects as Shift-JIS when its double-byte pairs are
+/// dense, which is what a Japanese address column looks like: `東京都千代田区` is seven pairs and
+/// only two Windows-1252 "character + letter" readings.
 #[test]
-fn a_kanji_only_csv_needs_the_encoding_named() {
-    // 日本語,漢字 in CP932.
+fn a_kanji_only_csv_still_detects_when_its_pairs_are_dense() {
+    // 東京都千代田区 in CP932.
+    let chiyoda = [0x93u8, 0x8C, 0x8B, 0x9E, 0x93, 0x73, 0x90, 0xE7, 0x91, 0xE3, 0x93, 0x63, 0x8B, 0xE6];
+    let wb = read_csv(&chiyoda, &CsvOptions::default()).unwrap();
+    assert_eq!(v(&wb, 0, 0), Value::text("東京都千代田区"));
+    assert_eq!(wb.csv_encoding, Some(CsvEncoding::ShiftJis));
+    // 日本語,漢字 in CP932 (five pairs, no Windows-1252 reading to speak of).
     let bytes = [0x93u8, 0xFA, 0x96, 0x7B, 0x8C, 0xEA, b',', 0x8A, 0xBF, 0x8E, 0x9A];
-    let auto = read_csv(&bytes, &CsvOptions::default()).unwrap();
-    assert_eq!(auto.csv_encoding, Some(CsvEncoding::Windows1252));
-    let named = read_csv(&bytes, &CsvOptions { encoding: CsvEncoding::ShiftJis, ..Default::default() }).unwrap();
-    assert_eq!(v(&named, 0, 0), Value::text("日本語"));
-    assert_eq!(v(&named, 0, 1), Value::text("漢字"));
-    assert_eq!(named.csv_encoding, Some(CsvEncoding::ShiftJis));
+    let wb = read_csv(&bytes, &CsvOptions::default()).unwrap();
+    assert_eq!(v(&wb, 0, 0), Value::text("日本語"));
+    assert_eq!(v(&wb, 0, 1), Value::text("漢字"));
+    assert_eq!(wb.csv_encoding, Some(CsvEncoding::ShiftJis));
+    // One lone pair is not dense enough: it is also one Windows-1252 character, so it stays
+    // Windows-1252.
+    let lone = [0x93u8, 0xFA];
+    assert_eq!(read_csv(&lone, &CsvOptions::default()).unwrap().csv_encoding, Some(CsvEncoding::Windows1252));
 }
 
 /// Windows-1252 smart quotes around letters are valid CP932 too: `‘a’b` is `0x91 0x61 0x92 0x62`,
-/// which decodes cleanly as `疎鍛`. No pair-counting rule separates that from kanji, which is why
-/// `auto` asks for kana — and why a plain save never re-encodes the mis-read text as CP932.
+/// which decodes cleanly as `疎鍛`. It holds no kana, and its two pairs are matched by the two
+/// "quote + letter" readings a Windows-1252 reader sees, so `auto` keeps the Windows-1252 text
+/// (and a plain save never re-encodes the mis-read text as CP932).
 #[test]
 fn windows_1252_smart_quotes_are_not_shift_jis() {
     let bytes = [0x91u8, b'a', 0x92, b'b'];
