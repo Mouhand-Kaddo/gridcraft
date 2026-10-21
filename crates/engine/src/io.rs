@@ -793,11 +793,11 @@ mod tests {
         assert_eq!(String::from_utf8(save_bytes(&wb, "tabs.csv").unwrap()).unwrap(), tabs);
     }
 
-    /// A CP932 (Shift-JIS) Japanese CSV built in code — `日本語,漢字,ｶﾅ,"a,b"` — never a binary fixture.
+    /// A CP932 (Shift-JIS) Japanese CSV built in code — `日本語,かな,ｶﾅ,"a,b"` — never a binary fixture.
     fn japanese_cp932_csv() -> Vec<u8> {
         let mut b = vec![0x93, 0xFA, 0x96, 0x7B, 0x8C, 0xEA]; // 日本語
         b.push(b',');
-        b.extend_from_slice(&[0x8A, 0xBF, 0x8E, 0x9A]); // 漢字
+        b.extend_from_slice(&[0x82, 0xA9, 0x82, 0xC8]); // かな (hiragana: what Auto detects)
         b.push(b',');
         b.extend_from_slice(&[0xB6, 0xC5]); // ｶﾅ (halfwidth katakana)
         b.push(b',');
@@ -826,7 +826,7 @@ mod tests {
         assert_eq!(latin.sheet(0).unwrap().value(CellRef::new(0, 0)), gridcraft_core::Value::text("\u{201C}\u{FA}\u{2013}{\u{152}\u{EA}"));
         assert_eq!(save_bytes(&latin, "jp.csv").unwrap(), bytes);
         // A .tsv keeps the encoding too (only its delimiter is reset).
-        let tsv = [0x93, 0xFA, 0x96, 0x7B, 0x8C, 0xEA, b'\t', 0xB6, 0xC5, b'\r', b'\n'];
+        let tsv = [0x82, 0xA9, 0x82, 0xC8, b'\t', 0xB6, 0xC5, b'\r', b'\n']; // かな\tｶﾅ
         let (from_tsv, _) = open_bytes("日本語.tsv", &tsv).unwrap();
         assert_eq!(from_tsv.csv_encoding, Some(CsvEncoding::ShiftJis));
         assert_eq!(save_bytes(&from_tsv, "日本語.tsv").unwrap(), tsv);
