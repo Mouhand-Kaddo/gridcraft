@@ -114,11 +114,11 @@ fn shift_jis_import_under_auto_and_explicit() {
     assert_eq!(latin.csv_encoding, Some(CsvEncoding::Windows1252));
 }
 
-/// `Auto` must not steal a Western file: a clean CP932 decode with no hiragana, full-width katakana
-/// or ideograph keeps today's Windows-1252 reading (the existing `encodings` assertions are the
-/// reference). Every single CP932 byte from `0xA1` to `0xDF` is a half-width katakana and that same
-/// range is `À`–`ß` and `¡`–`¿` in Windows-1252, so counting half-width katakana would read German
-/// and French files as Japanese — the maintainer's `Straße,Änderung` repro.
+/// `Auto` must not steal a Western file: a CP932 reading needs evidence that Windows-1252 cannot
+/// produce (the existing `encodings` assertions are the reference). Every single CP932 byte from
+/// `0xA1` to `0xDF` is a half-width katakana and that same range is `À`–`ß` and `¡`–`¿` in
+/// Windows-1252, so counting half-width katakana would read German and French files as Japanese —
+/// the maintainer's `Straße,Änderung` repro.
 #[test]
 fn auto_does_not_steal_windows_1252() {
     assert_eq!(decode_text(&[0x80, b'a', 0xE9]), "€aé");
@@ -155,10 +155,26 @@ fn auto_does_not_steal_windows_1252() {
         assert_eq!(v(&wb, 0, 1), Value::text(second), "{bytes:02X?}");
         assert_eq!(wb.csv_encoding, Some(CsvEncoding::Windows1252), "{bytes:02X?}");
     }
+    // Consecutive pairs are not enough on their own: a Windows-1252 accented letter can start a
+    // pair with the letter after it, so `préférée`, `élèves`, `évènement` and `Hämäläinen` form two
+    // or three in a row and still decode cleanly as CP932. They all sit in CP932's second lead
+    // range (`0xE0`–`0xFC`, where Windows-1252 has its accented letters), not the common one
+    // (`0x81`–`0x9F`) — the reviewer's cases, kept Windows-1252.
+    for (bytes, text) in [
+        (&[b'p', b'r', 0xE9, b'f', 0xE9, b'r', 0xE9, b'e'][..], "préférée"),
+        (&[0xE9, b'l', 0xE8, b'v', b'e', b's'], "élèves"),
+        (&[0xE9, b'v', 0xE8, b'n', b'e', b'm', b'e', b'n', b't'], "évènement"),
+        (&[b'H', 0xE4, b'm', 0xE4, b'l', 0xE4, b'i', b'n', b'e', b'n'], "Hämäläinen"),
+    ] {
+        let wb = read_csv(bytes, &CsvOptions::default()).unwrap();
+        assert_eq!(v(&wb, 0, 0), Value::text(text), "{bytes:02X?}");
+        assert_eq!(wb.csv_encoding, Some(CsvEncoding::Windows1252), "{bytes:02X?}");
+    }
 }
 
-/// A kanji-only CSV still detects as Shift-JIS: two or more consecutive double-byte characters are
-/// the evidence, so a list of names or terms needs no kana.
+/// A kanji-only CSV still detects as Shift-JIS: two or more consecutive double-byte characters
+/// from CP932's common lead range (`0x81`–`0x9F`) are the evidence, so a list of names or terms
+/// needs no kana.
 #[test]
 fn a_kanji_only_csv_still_detects_as_shift_jis() {
     // 日本語,漢字 in CP932 (three double-byte characters in a row).
@@ -170,6 +186,11 @@ fn a_kanji_only_csv_still_detects_as_shift_jis() {
     // A single lone ideograph (one pair in a row) is not enough — the Western ambiguity above.
     let lone = [0x93u8, 0xFA];
     assert_eq!(read_csv(&lone, &CsvOptions::default()).unwrap().csv_encoding, Some(CsvEncoding::Windows1252));
+    // Nor is a kanji-only file of rare (JIS level 2, `0xE0`+ lead) kanji: `漾潘` in CP932 is
+    // `0xE0 0x40 0xE0 0x4E`, which a Windows-1252 accented letter can start just as well, so it
+    // stays Windows-1252 unless `shift_jis` is named.
+    let rare = [0xE0u8, 0x40, 0xE0, 0x4E];
+    assert_eq!(read_csv(&rare, &CsvOptions::default()).unwrap().csv_encoding, Some(CsvEncoding::Windows1252));
 }
 
 /// Private-use characters come from CP932's user-defined area, so they are evidence the bytes are

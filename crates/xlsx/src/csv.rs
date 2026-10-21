@@ -36,17 +36,24 @@ fn has_private_use(text: &str) -> bool {
     text.chars().any(|c| matches!(c, '\u{E000}'..='\u{F8FF}'))
 }
 
-/// The longest run of consecutive CP932 double-byte sequences in `bytes`. A Windows-1252 file can
-/// turn *one* accented letter plus the ASCII letter after it into a valid CP932 pair (`é` is `0xE9`,
-/// and `0x6E` is a valid trail byte, so `Prénom,März` decodes cleanly as two lone ideographs), but
-/// two such pairs in a row only happen in text that is really Japanese (`日本語` is three). That
-/// run length is what separates the two without asking for kana: a kanji-only CSV still detects.
-fn longest_double_byte_run(bytes: &[u8]) -> usize {
+/// The longest run of consecutive CP932 double-byte sequences whose lead byte is in `0x81`–`0x9F`,
+/// in `bytes`. A Windows-1252 file can turn an accented letter plus the ASCII letter after it into a
+/// valid CP932 pair (`é` is `0xE9`, and `0x6E` is a valid trail byte), so merely counting valid
+/// pairs reads `Prénom,März` as two lone ideographs. Counting *consecutive* pairs is not enough
+/// either: `préférée` (`0xE9 0x66 0xE9 0x72 0xE9 0x65`) and `Hämäläinen` form three in a row.
+///
+/// The lead byte separates them. Windows-1252 accented letters are `0xC0`–`0xFF`, so they can only
+/// take CP932's second lead range (`0xE0`–`0xFC`, the rare-kanji half). CP932's `0x81`–`0x9F` range
+/// is symbols, kana and the common JIS X 0208 level-1 kanji — also the first half of level 2 — and
+/// Windows-1252's symbols there (`‘`, `“`, `–`, `…`) almost never form two consecutive pairs. So a
+/// run of two such characters is what separates Japanese from an accented Western file, and a
+/// kanji-only CSV still detects without asking for kana (`日本語` is three).
+fn longest_common_double_byte_run(bytes: &[u8]) -> usize {
     let mut best = 0;
     let mut run = 0;
     let mut i = 0;
     while let Some(&b) = bytes.get(i) {
-        let lead = matches!(b, 0x81..=0x9F | 0xE0..=0xFC);
+        let lead = matches!(b, 0x81..=0x9F);
         let trailing = bytes.get(i + 1).is_some_and(|t| matches!(t, 0x40..=0x7E | 0x80..=0xFC));
         if lead && trailing {
             run += 1;
@@ -90,8 +97,8 @@ fn decode_utf16(bytes: &[u8], le: bool) -> String {
 }
 
 /// [`CsvEncoding::Auto`]: UTF-8/UTF-16 BOMs, else UTF-8, else Shift-JIS when the decoded text
-/// looks Japanese (kana, or two double-byte characters in a row, and no private-use characters),
-/// else Windows-1252 — today's fallback, so a file that isn't Japanese reads as before.
+/// looks Japanese (kana, or two common double-byte characters in a row, and no private-use
+/// characters), else Windows-1252 — today's fallback, so a file that isn't Japanese reads as before.
 fn decode_auto(bytes: &[u8]) -> (String, Option<CsvEncoding>) {
     if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
         return (String::from_utf8_lossy(rest).into_owned(), Some(CsvEncoding::Utf8Bom));
@@ -107,11 +114,11 @@ fn decode_auto(bytes: &[u8]) -> (String, Option<CsvEncoding>) {
         Ok(s) => (s.to_string(), Some(CsvEncoding::Utf8)),
         Err(_) => {
             // Shift-JIS only for a *clean* CP932 decode that looks Japanese: kana, or two or more
-            // double-byte characters in a row, with no private-use characters (the CP932
+            // common double-byte characters in a row, with no private-use characters (the CP932
             // user-defined area, which real Japanese text doesn't use). Everything else keeps the
             // historical Windows-1252 reading, so a Western file is never respelled as Japanese.
             let (shift_jis, had_errors) = encoding_rs::SHIFT_JIS.decode_without_bom_handling(bytes);
-            let japanese = has_kana(&shift_jis) || longest_double_byte_run(bytes) >= 2;
+            let japanese = has_kana(&shift_jis) || longest_common_double_byte_run(bytes) >= 2;
             if !had_errors && japanese && !has_private_use(&shift_jis) {
                 (shift_jis.into_owned(), Some(CsvEncoding::ShiftJis))
             } else {
@@ -181,18 +188,21 @@ fn cp932_text(text: &str) -> std::borrow::Cow<'_, str> {
     )
 }
 
-/// Encodes CSV text in `encoding`. `Auto` writes UTF-8: it applies to reading only.
-pub(crate) fn encode_text(text: &str, encoding: CsvEncoding) -> Vec<u8> {
+/// Encodes CSV text in `encoding`. `Auto` writes UTF-8: it applies to reading only. The text is
+/// taken by value so the UTF-8 paths reuse its buffer instead of copying it (`into_bytes`): a
+/// near-limit export would otherwise hold the CSV twice.
+pub(crate) fn encode_text(text: String, encoding: CsvEncoding) -> Vec<u8> {
     match encoding {
-        CsvEncoding::Auto | CsvEncoding::Utf8 => text.as_bytes().to_vec(),
+        CsvEncoding::Auto | CsvEncoding::Utf8 => text.into_bytes(),
         CsvEncoding::Utf8Bom => {
+            // Room for the BOM in the same allocation: one move, not a second copy.
             let mut out = Vec::with_capacity(text.len() + 3);
             out.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
             out.extend_from_slice(text.as_bytes());
             out
         }
-        CsvEncoding::ShiftJis => encode_legacy(&cp932_text(text), encoding_rs::SHIFT_JIS),
-        CsvEncoding::Windows1252 => encode_legacy(text, encoding_rs::WINDOWS_1252),
+        CsvEncoding::ShiftJis => encode_legacy(&cp932_text(&text), encoding_rs::SHIFT_JIS),
+        CsvEncoding::Windows1252 => encode_legacy(&text, encoding_rs::WINDOWS_1252),
     }
 }
 
@@ -406,8 +416,9 @@ fn write_csv_in(
         }
     }
     // UTF-8 is the widest of the encodings here, so the check above is the conservative one; this
-    // exact check catches the BOM pushing a just-under-the-limit export over it.
-    let bytes = encode_text(&out, encoding);
+    // exact check catches the BOM pushing a just-under-the-limit export over it. `out` is moved in:
+    // the UTF-8 path reuses its buffer, so an accepted export is not held twice.
+    let bytes = encode_text(out, encoding);
     if bytes.len() > limit {
         return Err(too_large(format!("more than {} MiB when encoded as {}", limit >> 20, encoding.as_str())));
     }
