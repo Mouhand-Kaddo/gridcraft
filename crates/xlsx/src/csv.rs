@@ -215,11 +215,12 @@ pub(crate) fn encode_text(text: String, encoding: CsvEncoding) -> Vec<u8> {
     match encoding {
         CsvEncoding::Auto | CsvEncoding::Utf8 => text.into_bytes(),
         CsvEncoding::Utf8Bom => {
-            // Room for the BOM in the same allocation: one move, not a second copy.
-            let mut out = Vec::with_capacity(text.len() + 3);
-            out.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
-            out.extend_from_slice(text.as_bytes());
-            out
+            // The BOM goes into the buffer's own spare capacity (reserved first, so it does not
+            // grow): one allocation and one shift, not a second copy of the whole text.
+            let mut text = text;
+            text.reserve(3);
+            text.insert(0, '\u{FEFF}');
+            text.into_bytes()
         }
         CsvEncoding::ShiftJis => encode_legacy(&cp932_text(&text), encoding_rs::SHIFT_JIS),
         CsvEncoding::Windows1252 => encode_legacy(&text, encoding_rs::WINDOWS_1252),
