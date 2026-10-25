@@ -58,7 +58,7 @@ fn explicit_direction_reaches_cells_on_both_sheet_geometries() {
                 == if rtl { egui::epaint::text::TextDirection::RightToLeft } else { egui::epaint::text::TextDirection::LeftToRight }));
             for shape in painted {
                 assert_eq!(shape.galley.rows.iter().flat_map(|r| r.glyphs.iter().map(|g| g.chr)).collect::<String>(), text);
-                assert_eq!(shape.galley.rows[0].paragraph_level % 2 == 1, rtl);
+                assert_eq!(shape.galley.rows[0].rtl_paragraph, rtl);
             }
         }
     }
@@ -111,6 +111,6 @@ fn conditional_reading_order_reaches_the_formula_bar() {
             text_shapes(&shape.shape, text, &mut painted);
         }
         let formula_bar = painted.iter().min_by(|a, b| a.pos.y.total_cmp(&b.pos.y)).unwrap();
-        assert_eq!(formula_bar.galley.rows[0].paragraph_level % 2 == 1, rtl);
+        assert_eq!(formula_bar.galley.rows[0].rtl_paragraph, rtl);
     }
 }

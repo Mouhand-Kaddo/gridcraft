@@ -29,8 +29,11 @@ fn editing(text: &str, formula_bar: bool) -> egui_kittest::Harness<'static, Shee
     }
     h.run_steps(2);
     assert_eq!(h.state().editor.as_ref().map(|e| e.from_formula_bar), Some(formula_bar));
-    h.key_press(Key::End);
+    h.key_press_modifiers(Modifiers::CTRL, Key::End);
     h.run_steps(2);
+    let id = egui::Id::unique(if formula_bar { "gridcraft.formula_bar" } else { "gridcraft.cell_editor" });
+    let caret = egui::text_edit::TextEditState::load(&h.ctx, id).and_then(|state| state.cursor.char_range()).map(|range| range.primary.index.0);
+    assert_eq!(caret, Some(text.chars().count()), "the caret starts at the text's logical end");
     h
 }
 
@@ -59,7 +62,7 @@ fn caret_after_typing_arabic_is_drawn_at_its_left_end() {
     let mut h = editing("", false);
     h.input_mut().events.push(Event::Text("بسم الله".into()));
     h.run_steps(2);
-    let state = egui::text_edit::TextEditState::load(&h.ctx, egui::Id::new("gridcraft.cell_editor")).unwrap();
+    let state = egui::text_edit::TextEditState::load(&h.ctx, egui::Id::unique("gridcraft.cell_editor")).unwrap();
     let caret = state.cursor.char_range().unwrap().primary;
     assert_eq!(caret.index.0, "بسم الله".chars().count());
     let (_, galley) = cell_editor_galley(&h, "بسم الله").unwrap();
@@ -114,7 +117,7 @@ fn previous_visual_word_crosses_arabic_from_its_right_edge() {
         Event::PointerButton { pos, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE },
     ]);
     h.run_steps(2);
-    let state = egui::text_edit::TextEditState::load(&h.ctx, egui::Id::new("gridcraft.cell_editor")).unwrap();
+    let state = egui::text_edit::TextEditState::load(&h.ctx, egui::Id::unique("gridcraft.cell_editor")).unwrap();
     let caret = state.cursor.char_range().map(|r| (r.primary.index.0, r.primary.prefer_next_row));
     assert_eq!(caret, Some((7, true)), "the click lands on the Arabic run's right edge");
     h.key_press_modifiers(Modifiers::CTRL, Key::ArrowLeft);
