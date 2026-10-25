@@ -827,7 +827,7 @@ mod tests {
                 <cellStyles><cellStyle name="Directional" xfId="0"/></cellStyles>
                 <dxfs><dxf><alignment readingOrder="{order}"/></dxf></dxfs></styleSheet>"#
             );
-            let styles = read_styles(&crate::xml::parse(xml.as_bytes()).unwrap(), &[]);
+            let styles = read_styles(&crate::xml::parse(xml.as_bytes()).unwrap(), &[], "Calibri");
             let mut wb = Workbook::new();
             wb.styles.intern(styles.xfs[1].clone());
             wb.cell_styles = styles.named.clone();
@@ -843,7 +843,7 @@ mod tests {
                     .collect();
                 assert_eq!(orders, [order], "{section}");
             }
-            let reopened = read_styles(&root, &[]);
+            let reopened = read_styles(&root, &[], "Calibri");
             assert_eq!(reopened.xfs[1].align, styles.xfs[1].align);
             assert_eq!(reopened.named, styles.named);
             assert_eq!(reopened.dxfs, styles.dxfs);
