@@ -117,7 +117,7 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
                     // Show the active cell's content; clicking starts editing in the bar.
                     let text = active_input(app);
                     let color = if read_only { t.text_disabled } else { t.text };
-                    let order = app.session.active().and_then(|doc| cell_reading_order(app, doc.wb.active_sheet, doc.selection.active));
+                    let order = app.session.active().and_then(|doc| cell_reading_order(app, doc.wb.active_sheet(), doc.selection.active));
                     let direction = crate::text_direction::cell_direction(order, &text);
                     let galley = child
                         .painter()
