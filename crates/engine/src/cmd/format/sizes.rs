@@ -157,13 +157,16 @@ fn is_zero_width(c: char) -> bool {
 /// Width in ems of an Arabic-script character, measured from shaped Noto Sans Arabic, Noto Naskh
 /// Arabic and DejaVu Sans: joined letters average about half an em, word ligatures such as ﷺ and the
 /// rial sign about 1.2 em, the honorific ligatures (U+FD40–FD4B) about 1.6 em, and the bismillah
-/// ligature about 11 em. The later honorific ligatures (U+FD4C–FD4F, U+FDC8–FDCF) are not measured
-/// and get the 1.6 em of their siblings rather than the letter width.
+/// ligature about 11 em. The later honorific ligatures (U+FBC3–FBD2, U+FD4C–FD4F, U+FD90–FD91,
+/// U+FDC8–FDCF) are not measured and get the 1.6 em of their siblings rather than the letter width.
+/// Arabic-Indic digits are as wide as ASCII digits (0.53–0.57 em in Noto Sans Arabic, Arial, Tahoma
+/// and Times New Roman); Arabic punctuation (0.2–0.5 em in the same fonts) keeps the letter width.
 fn arabic_em(c: char) -> Option<f32> {
     match c {
         '\u{FDFD}' => Some(11.0),
-        '\u{FD40}'..='\u{FD4F}' | '\u{FDC8}'..='\u{FDCF}' => Some(1.6),
+        '\u{FBC3}'..='\u{FBD2}' | '\u{FD40}'..='\u{FD4F}' | '\u{FD90}'..='\u{FD91}' | '\u{FDC8}'..='\u{FDCF}' => Some(1.6),
         '\u{FDF0}'..='\u{FDFC}' | '\u{FDFE}'..='\u{FDFF}' => Some(1.2),
+        '\u{0660}'..='\u{0669}' | '\u{06F0}'..='\u{06F9}' => Some(0.56),
         '\u{0600}'..='\u{06FF}' | '\u{0750}'..='\u{077F}' | '\u{0870}'..='\u{08FF}' | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFC}' => Some(0.48),
         _ => None,
     }

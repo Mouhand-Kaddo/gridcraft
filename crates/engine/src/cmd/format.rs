@@ -886,10 +886,19 @@ mod tests {
         let em = |t: &str| approx_text_width(t, 72.0, false) / 96.0;
         assert!(em("\u{FDFD}") > 8.0);
         assert!(em("\u{FDFA}") > 1.0);
-        for honorific in ['\u{FD40}', '\u{FD4B}', '\u{FD4C}', '\u{FD4F}', '\u{FDC8}', '\u{FDCF}', '\u{FDFE}', '\u{FDFF}'] {
+        let honorifics = ['\u{FD40}', '\u{FD4B}', '\u{FD4C}', '\u{FD4F}', '\u{FDC8}', '\u{FDCF}', '\u{FDFE}', '\u{FDFF}'];
+        for honorific in honorifics.into_iter().chain(['\u{FBC3}', '\u{FBD2}', '\u{FD90}', '\u{FD91}']) {
             assert!(em(&honorific.to_string()) > 1.0, "U+{:04X}", u32::from(honorific));
         }
         assert!(em("ب") < 0.6);
+    }
+
+    #[test]
+    fn arabic_digits_are_as_wide_as_ascii_digits_and_punctuation_as_a_letter() {
+        let width = |t: &str| approx_text_width(t, 11.0, false);
+        assert_eq!(width("١٢٣"), width("123"));
+        assert_eq!(width("۴۵۶"), width("456"));
+        assert_eq!(width("،؟"), width("بب"));
     }
 
     #[test]
