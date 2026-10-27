@@ -222,6 +222,33 @@ fn fallback_covers_its_script() {
     }
 }
 
+#[test]
+/// A preferred Arabic file keeps the system Arabic faces from loading it again only once it is
+/// loaded: one that failed to load leaves them free to load it.
+fn an_unloaded_preferred_arabic_file_does_not_block_the_system_face() {
+    let dir = std::env::temp_dir().join(format!("gridcraft-theme-preferred-arabic-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("Arabic.ttf");
+    std::fs::write(&path, epaint_default_fonts::UBUNTU_LIGHT).expect("font fixture");
+    let path = path.to_string_lossy().into_owned();
+    let preferred = || Some((path.clone(), 0));
+    let faces = || vec![("sys-arabic", vec![(path.clone(), 0)])];
+
+    let mut fonts = FontDefinitions::default();
+    let loaded = preferred_file(&fonts, preferred());
+    assert!(loaded.is_empty(), "a preferred face that did not load reserves no file");
+    assert_eq!(load_faces(&mut fonts, faces(), loaded), ["sys-arabic"]);
+
+    let mut fonts = FontDefinitions::default();
+    fonts.font_data.insert(PREFERRED_ARABIC.into(), Arc::new(FontData::from_static(epaint_default_fonts::UBUNTU_LIGHT)));
+    let loaded = preferred_file(&fonts, preferred());
+    assert_eq!(loaded, std::slice::from_ref(&path));
+    assert!(load_faces(&mut fonts, faces(), loaded).is_empty(), "a loaded preferred file is not loaded a second time");
+    assert!(!fonts.font_data.contains_key("sys-arabic"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn with_installed_latin_font() -> std::io::Result<FontDefinitions> {
     let dir = std::env::temp_dir().join(format!("gridcraft-theme-latin-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

@@ -10,12 +10,25 @@ use super::*;
 /// is bundled, and a machine without the face keeps the old behaviour.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn load_fallback(fonts: &mut FontDefinitions, han: HanOrder) -> Vec<String> {
+    let loaded = preferred_file(fonts, fontconfig_arabic());
+    load_faces(fonts, fallback_faces(han), loaded)
+}
+
+/// The preferred Arabic file, once [`load_preferred_arabic`] has loaded it: a file that failed to
+/// load must not keep the system Arabic faces out of the chains.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn preferred_file(fonts: &FontDefinitions, preferred: Option<(String, u32)>) -> Vec<String> {
+    preferred.filter(|_| fonts.font_data.contains_key(PREFERRED_ARABIC)).map(|(path, _)| path).into_iter().collect()
+}
+
+/// Loads the first candidate of each fallback face that loads and returns their keys. `loaded`
+/// holds the files already loaded as a fallback face. A file serves at most one key: the
+/// region-merged Noto Sans CJK .ttc found for Han also carries Hangul (and Tahoma carries both Thai
+/// and Hebrew), so loading it again for a later script would only duplicate tens of MB in memory.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn load_faces(fonts: &mut FontDefinitions, faces: Vec<(&'static str, Vec<(String, u32)>)>, mut loaded: Vec<String>) -> Vec<String> {
     let mut keys = Vec::new();
-    // Files already loaded as a fallback face. A file serves at most one key: the region-merged
-    // Noto Sans CJK .ttc found for Han also carries Hangul (and Tahoma carries both Thai and
-    // Hebrew), so loading it again for a later script would only duplicate tens of MB in memory.
-    let mut loaded: Vec<String> = fontconfig_arabic().map(|(path, _)| path).into_iter().collect();
-    for (key, cands) in fallback_faces(han) {
+    for (key, cands) in faces {
         for (path, index) in &cands {
             if loaded.contains(path) {
                 break; // a face loaded for an earlier script already covers this one

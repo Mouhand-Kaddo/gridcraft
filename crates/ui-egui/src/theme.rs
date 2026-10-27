@@ -24,10 +24,13 @@ mod font_fallback;
 mod font_setup;
 
 pub use font_fallback::symbol_face_installed;
-#[cfg(all(test, unix, not(target_os = "macos")))]
-use font_fallback::{PREFERRED_ARABIC, covers_arabic, fontconfig_arabic, parse_fc_match};
 #[cfg(test)]
-use font_fallback::{arabic, cjk_han_japanese, cjk_han_simplified, cjk_hangul, fallback_faces, hebrew, lao, symbols_more, thai};
+use font_fallback::{
+    PREFERRED_ARABIC, arabic, cjk_han_japanese, cjk_han_simplified, cjk_hangul, fallback_faces, hebrew, lao, load_faces, preferred_file,
+    symbols_more, thai,
+};
+#[cfg(all(test, unix, not(target_os = "macos")))]
+use font_fallback::{covers_arabic, fontconfig_arabic, parse_fc_match};
 use font_setup::pick;
 pub use font_setup::{
     CELL, CELL_BOLD, CELL_BOLD_ITALIC, CELL_ITALIC, CraftFont, HanOrder, MONO, SERIF, UI, UI_BOLD, available_text, cell_family, cell_text_width,
