@@ -321,7 +321,8 @@ fn the_craft_arabic_face_reaches_every_chain() {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 #[test]
-/// fontconfig's Arabic face, when it has Arabic letters, leads the other Arabic faces in every chain (#229).
+/// fontconfig's Arabic face, when it has Arabic letters, comes first among the Arabic fallbacks in every chain (#229). A
+/// UI or cell face with Arabic of its own sits ahead of every fallback and still draws Arabic first.
 fn the_fontconfig_arabic_choice_comes_first() {
     assert_eq!(
         parse_fc_match("/home/u/.local/share/fonts/Vazirmatn-Regular.ttf\n0\n"),
