@@ -951,6 +951,30 @@ fn b2_month_and_year_rollover() {
     assert_eq!(f("B2dd/mm/yyyy", 37684.0), "01/01/1424");
 }
 
+/// Cycle years 15 (1425, leap) and 16 (1426, not leap): Excel's leap year is 15, not 16. The
+/// 2 March 2005 and 29 January 2006 values were read from Excel by a reviewer; the year
+/// boundaries follow from them and the 354/355-day years. The same comparison covered every
+/// serial from 36,000 to 49,000 with no disagreement.
+#[test]
+fn b2_leap_year_is_cycle_year_15() {
+    assert_eq!(f("B2yyyy-mm-dd", 38413.0), "1426-01-21"); // 2005-03-02, from Excel
+    assert_eq!(f("B2yyyy-mm-dd", 38746.0), "1426-12-29"); // 2006-01-29, from Excel
+    assert_eq!(f("B2dd/mm/yyyy", 38037.0), "29/12/1424"); // 2004-02-20
+    assert_eq!(f("B2dd/mm/yyyy", 38038.0), "01/01/1425"); // 2004-02-21
+    assert_eq!(f("B2dd/mm/yyyy", 38392.0), "30/12/1425"); // 2005-02-09
+    assert_eq!(f("B2dd/mm/yyyy", 38393.0), "01/01/1426"); // 2005-02-10
+    assert_eq!(f("B2dd/mm/yyyy", 38747.0), "01/01/1427"); // 2006-01-30
+    // Anchors the reviewer read from Excel.
+    assert_eq!(f("B2dd/mm/yyyy", 46314.0), "08/05/1448"); // 2026-10-19
+    assert_eq!(f("B2dd/mm/yyyy", 46313.0), "07/05/1448"); // 2026-10-18
+    assert_eq!(f("B2dd/mm/yyyy", JAN_1_2001), "06/10/1421");
+    assert_eq!(f("B2dd/mm/yyyy", 61.0), "29/10/1317"); // 1900-03-01
+    assert_eq!(f("B2dd/mm/yyyy", 64970.0), "01/01/1501"); // 2077-11-16
+    assert_eq!(f("B2dd/mm/yyyy", 64971.0), "02/01/1501"); // 2077-11-17
+    assert_eq!(f("B2dd/mm/yyyy", 0.0), "29/08/1317");
+    assert_eq!(f("B2dd/mm/yyyy", 2958465.0), "03/04/9666"); // 9999-12-31
+}
+
 /// Excel honours `B2` after a colour tag, but a `[$-...]` locale tag before it keeps the date
 /// Gregorian (the prefix is still hidden); `B2[$-401]` is Hijri.
 #[test]
