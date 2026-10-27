@@ -935,10 +935,47 @@ fn b2_prefix_on_general_and_text_sections() {
 #[test]
 fn b2_prefix_names_hijri_months() {
     assert_eq!(f("B2d mmmm yyyy", JAN_1_2001), "6 شوال 1421");
-    assert_eq!(f("B2mmm", 37034.0), "ربيع الأول");
+    assert_eq!(f("B2mmm", 37034.0), "ربيع\u{a0}الأول");
     assert_eq!(f("B2mmmm", JAN_1_2001 + 23.0), "شوال");
-    assert_eq!(f("B2mmmm", JAN_1_2001 + 24.0), "ذو القعدة");
+    assert_eq!(f("B2mmmm", JAN_1_2001 + 24.0), "ذو\u{a0}القعدة");
     assert_eq!(f("B2mmmmm", JAN_1_2001 + 24.0), "ذ");
+}
+
+/// All twelve month names and seven weekday names as Excel 16.0 (build 20527, en-US) shows them,
+/// read with TEXT and a cell format: two-word month names are joined by a no-break space.
+#[test]
+fn b2_names_match_excel() {
+    let months = [
+        (46219.0, "صفر"),
+        (46248.0, "ربيع\u{a0}الأول"),
+        (46278.0, "ربيع\u{a0}الثاني"),
+        (46307.0, "جمادى\u{a0}الأولى"),
+        (46337.0, "جمادى\u{a0}الثانية"),
+        (46366.0, "رجب"),
+        (46396.0, "شعبان"),
+        (46425.0, "رمضان"),
+        (46455.0, "شوال"),
+        (46484.0, "ذو\u{a0}القعدة"),
+        (46514.0, "ذو\u{a0}الحجة"),
+        (46543.0, "محرم"),
+    ];
+    for (serial, name) in months {
+        assert_eq!(f("B2dd", serial), "01", "{serial}");
+        assert_eq!(f("B2mmmm", serial), name, "{serial}");
+        assert_eq!(f("B2mmm", serial), name, "{serial}");
+        assert_eq!(f("B2mmmmmm", serial), name, "{serial}");
+    }
+    // Sunday 18 to Saturday 24 October 2026.
+    let days = ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+    for (k, name) in days.iter().enumerate() {
+        let serial = 46313.0 + k as f64;
+        assert_eq!(f("B2dddd", serial), *name, "{serial}");
+        assert_eq!(f("B2ddd", serial), *name, "{serial}");
+    }
+    assert_eq!(f("B2yy", 46314.0), "48");
+    assert_eq!(f("B2y", 46314.0), "48");
+    assert_eq!(f("B2yyy", 46314.0), "1448");
+    assert_eq!(f("B2yyyyy", 46314.0), "1448");
 }
 
 #[test]
@@ -987,16 +1024,57 @@ fn calendar_prefix_and_bracket_tags() {
         assert_eq!(text_function(&Value::Number(46314.0), code, S).as_deref(), Ok("19/10/2026"), "{code}");
     }
     assert_eq!(f("[Red][$-401]B1dd/mm/yyyy", JAN_1_2001), "01/01/2001");
+    // Checked in Excel 16.0 (build 20527, en-US): a currency tag cancels `B2` like a locale tag,
+    // a tag after the prefix does not, and a repeated prefix is accepted.
+    assert_eq!(f("[$€-407]B2dd/mm/yyyy", 46314.0), "€19/10/2026");
+    assert_eq!(f("[$$-409]B2dd/mm/yyyy", 46314.0), "$19/10/2026");
+    assert_eq!(f("[$-401][Red]B2dd/mm/yyyy", 46314.0), "19/10/2026");
+    assert_eq!(f("B2[Red]dd/mm/yyyy", 46314.0), "08/05/1448");
+    for code in ["B2B2dd/mm/yyyy", "B2B2B2dd/mm/yyyy", "B2b2dd/mm/yyyy", "[Red]B2B2dd/mm/yyyy"] {
+        assert_eq!(f(code, 46314.0), "08/05/1448", "{code}");
+    }
+    assert_eq!(f("B1B1dd/mm/yyyy", 46314.0), "19/10/2026");
+    assert_eq!(f("B2 dd/mm/yyyy", 46314.0), " 08/05/1448");
+    assert_eq!(f("B2\"x\"dd", 46314.0), "x08");
+    for code in ["B1\"x\"", "B2\"x\""] {
+        assert_eq!(f(code, 46314.0), "x", "{code}");
+    }
+    for code in ["B1General", "B1@", "0;0;0;B2@", "0;B2dd/mm/yyyy"] {
+        assert_eq!(f(code, 46314.0), "46314", "{code}");
+    }
 }
 
-/// A quoted `B2` is literal text; any other unquoted `B` and digit makes Excel reject the code
-/// (`TEXT` is `#VALUE!`), as does `B2` before a number format. A rejected code shows as General.
+/// A quoted `B2` is literal text; any other `B` and digit makes Excel reject the code (`TEXT` is
+/// `#VALUE!`), as does a prefix before a number format. A rejected code shows as General. All
+/// checked in Excel 16.0 (build 20527, en-US), with TEXT and with a cell format.
 #[test]
 fn misplaced_calendar_prefix_is_rejected() {
     assert_eq!(f("\"B2\"dd/mm/yyyy", 46314.0), "B219/10/2026");
     assert_eq!(f("dd/\"B2\"/yyyy", 46314.0), "19/B2/2026");
-    assert_eq!(f("dd \\B2 yyyy", JAN_1_2001), "01 B2 2001");
-    for code in ["B3dd/mm/yyyy", "dd/mm/yyyyB2", "dd B2 mm", "B20.00", "0;B3dd"] {
+    for code in [
+        "B0dd/mm/yyyy",
+        "B3dd/mm/yyyy",
+        "B4dd/mm/yyyy",
+        "B9dd/mm/yyyy",
+        "B02dd",
+        "B12dd",
+        "B21dd",
+        "B1B2dd/mm/yyyy",
+        "B2B1dd/mm/yyyy",
+        "B2[Red]B2dd/mm/yyyy",
+        "B2 B2dd",
+        "dd/mm/yyyyB2",
+        "dd/mm/yyyyB1",
+        "dd B2 mm",
+        "dd b2 mm",
+        "dd \\B2 yyyy",
+        "B2\\B2dd",
+        "B20.00",
+        "B2#,##0",
+        "B10.00",
+        "B1#,##0",
+        "0;B3dd",
+    ] {
         assert_eq!(text_function(&Value::Number(46314.0), code, S), Err(CellError::Value), "{code}");
         assert_eq!(f(code, 46314.0), "46314", "{code}");
         assert!(NumberFormat::parse(code).is_general(), "{code}");
@@ -1011,6 +1089,17 @@ fn b2_edges_of_the_date_range() {
     assert_eq!(f("B1dd/mm/yyyy", 60.0), "29/02/1900");
     assert_eq!(f("B2dd/mm/yyyy", 59.0), "28/10/1317");
     assert_eq!(f("B2dd/mm/yyyy", 61.0), "29/10/1317");
+    // So does any clock part (Excel 16.0, build 20527, en-US), but not an elapsed `[h]`, a literal,
+    // or a locale tag that cancels `B2`.
+    for code in ["B2hh:mm", "B2hh", "B2ss", "B2am/pm", "B2hh:mm AM/PM", "B2[$-401]hh:mm", "B2dd/mm/yyyy;\"x\""] {
+        assert_eq!(text_function(&Value::Number(60.0), code, S), Err(CellError::Value), "{code}");
+        assert_eq!(text_function(&Value::Number(60.5), code, S), Err(CellError::Value), "{code}");
+    }
+    assert_eq!(f("B2[h]", 60.0), "1440");
+    assert_eq!(f("B2\"x\"", 60.0), "x");
+    assert_eq!(f("[$-401]B2hh:mm", 60.0), "00:00");
+    assert_eq!(f("B1hh:mm", 60.0), "00:00");
+    assert_eq!(f("B2hh:mm", 61.0), "00:00");
     // Serial 0 shows as serial 1.
     assert_eq!(f("B2dd/mm/yyyy", 0.0), "29/08/1317");
     assert_eq!(f("B2dd/mm/yyyy", 1.0), "29/08/1317");

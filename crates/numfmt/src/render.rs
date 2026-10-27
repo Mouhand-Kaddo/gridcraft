@@ -3,6 +3,7 @@
 use gridcraft_core::DateSystem;
 use gridcraft_core::date::{datetime_from_serial, max_serial};
 
+use crate::calendar::Calendar;
 use crate::decimal::{decimal_digits, fixed, fixed_from_digits, format_general_fit};
 use crate::parse::{DatePart, Section, Tok};
 
@@ -72,6 +73,15 @@ pub(crate) fn render_date(sec: &Section, v: f64, sys: DateSystem) -> Option<Out>
         day += 1;
     }
     let total_ms = day.saturating_mul(86_400_000).saturating_add(ms);
+    // Under `B2`, Excel shows the 1900 system's fictitious 29 February (serial 60) as `#VALUE!`
+    // whenever a clock or calendar part is shown, even for `hh:mm` (`[h]` alone still works).
+    if sec.calendar == Calendar::Hijri
+        && sys == DateSystem::D1900
+        && day == 60
+        && sec.toks.iter().any(|t| matches!(t, Tok::Date(d) if !d.is_elapsed()))
+    {
+        return None;
+    }
     let needs_date = sec.toks.iter().any(|t| matches!(t, Tok::Date(d) if d.is_calendar()));
     let dt = if needs_date { datetime_from_serial(sys, day as f64)? } else { datetime_from_serial(sys, 0.0).unwrap_or_default() };
     let ampm = sec.toks.iter().any(|t| matches!(t, Tok::Date(DatePart::AmPm | DatePart::AP(..))));

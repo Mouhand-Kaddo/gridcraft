@@ -25,6 +25,11 @@ pub(crate) enum DatePart {
 }
 
 impl DatePart {
+    /// `[h]`, `[m]` or `[s]`.
+    pub(crate) fn is_elapsed(self) -> bool {
+        matches!(self, DatePart::ElapsedH(_) | DatePart::ElapsedM(_) | DatePart::ElapsedS(_))
+    }
+
     pub(crate) fn is_calendar(self) -> bool {
         matches!(self, DatePart::Year(_) | DatePart::Month(_) | DatePart::Day(_))
     }
@@ -124,8 +129,8 @@ pub(crate) struct Section {
     pub currency: bool,
     pub fill: bool,
     pub calendar: Calendar,
-    /// Excel rejects the whole code because of this section: an unquoted `B` and digit that is
-    /// not a calendar prefix, or `B2` before a number format (`B20.00`).
+    /// Excel rejects the whole code because of this section: a `B` and digit that is not a
+    /// calendar prefix, or a prefix before a number format (`B20.00`).
     pub invalid: bool,
 }
 
@@ -257,8 +262,9 @@ struct Raw {
     cond: Option<Cond>,
     currency: bool,
     calendar: Calendar,
-    /// The section starts with `B2` (whether or not a locale tag cancels it).
-    hijri_prefix: bool,
+    /// The section's calendar prefix as written, `'1'` or `'2'` (whether or not a locale tag
+    /// cancels it).
+    prefix: Option<char>,
     /// An unquoted `B` and digit that is not a calendar prefix: Excel rejects the code.
     invalid: bool,
 }
@@ -282,24 +288,28 @@ fn after_leading_brackets(cs: &[char]) -> (usize, bool) {
 
 fn tokenize(src: &str) -> Raw {
     let cs: Vec<char> = src.chars().collect();
-    let mut raw =
-        Raw { toks: Vec::new(), color: None, cond: None, currency: false, calendar: Calendar::Gregorian, hijri_prefix: false, invalid: false };
+    let mut raw = Raw { toks: Vec::new(), color: None, cond: None, currency: false, calendar: Calendar::Gregorian, prefix: None, invalid: false };
     let toks = &mut raw.toks;
     // With no `]` at or after a `[`, that `[` is a literal; checking this once keeps the scan linear.
     let last_close = cs.iter().rposition(|&c| c == ']');
     let (body_start, locale_first) = after_leading_brackets(&cs);
+    // Where the next calendar prefix may stand: the body's start, or right after another prefix.
+    let mut prefix_at = body_start;
     let mut i = 0usize;
     while let Some(&c) = cs.get(i) {
         match c {
-            // A calendar prefix, never shown. Excel keeps the date Gregorian when a `[$-401]`-style
-            // locale tag comes before `B2` (`B2[$-401]` is still Hijri).
-            'B' | 'b' if i == body_start && matches!(cs.get(i + 1), Some('1' | '2')) => {
-                raw.hijri_prefix = cs.get(i + 1) == Some(&'2');
-                raw.calendar = if raw.hijri_prefix && !locale_first { Calendar::Hijri } else { Calendar::Gregorian };
+            // A calendar prefix, never shown: `B1` or `B2`, any case, which Excel accepts repeated
+            // (`B2B2`) but not mixed (`B2B1`) or with more digits (`B12`, `B02`).
+            'B' | 'b' if i == prefix_at && cs.get(i + 1).is_some_and(char::is_ascii_digit) => {
+                let d = cs.get(i + 1).copied();
+                let ok = matches!(d, Some('1' | '2')) && !cs.get(i + 2).is_some_and(char::is_ascii_digit) && raw.prefix.is_none_or(|p| Some(p) == d);
+                raw.invalid |= !ok;
+                raw.prefix = d;
                 i += 2;
+                prefix_at = i;
                 continue;
             }
-            // Any other unquoted `B` and digit (`B3dd`, `dd/mm/yyyyB2`, `dd B2 mm`) makes Excel
+            // Any other `B` and digit (`B3dd`, `dd/mm/yyyyB2`, `dd B2 mm`, `B2[Red]B2`) makes Excel
             // reject the code.
             'B' | 'b' if cs.get(i + 1).is_some_and(char::is_ascii_digit) => {
                 raw.invalid = true;
@@ -326,6 +336,8 @@ fn tokenize(src: &str) -> Raw {
                     if is_currency_char(d) {
                         raw.currency = true;
                     }
+                    // Excel rejects an escaped `\B2` as well.
+                    raw.invalid |= matches!(d, 'B' | 'b') && cs.get(i + 2).is_some_and(char::is_ascii_digit);
                     push_lit(toks, d.encode_utf8(&mut [0; 4]));
                 }
                 i += 2;
@@ -426,6 +438,11 @@ fn tokenize(src: &str) -> Raw {
         }
         i += 1;
     }
+    // Excel keeps the date Gregorian when a `[$-401]`-style locale or currency tag comes before
+    // `B2` (`B2[$-401]` is still Hijri).
+    if raw.prefix == Some('2') && !locale_first {
+        raw.calendar = Calendar::Hijri;
+    }
     raw
 }
 
@@ -481,7 +498,7 @@ fn date_part(t: &Tok) -> Option<DatePart> {
 }
 
 fn analyze(raw: Raw) -> Section {
-    let Raw { mut toks, color, cond, currency, calendar, hijri_prefix, invalid } = raw;
+    let Raw { mut toks, color, cond, currency, calendar, prefix, invalid } = raw;
     let is_date = toks.iter().any(|t| matches!(t, Tok::Date(_)));
     let has_general = toks.iter().any(|t| matches!(t, Tok::General));
     let mut sec = Section {
@@ -566,9 +583,9 @@ fn analyze(raw: Raw) -> Section {
         sec.toks = out;
         return sec;
     }
-    // Number section. Excel rejects `B2` before digits (`B20.00`); `B2General` and `B2@` show the
-    // value as without the prefix.
-    sec.invalid |= hijri_prefix && sec.has_digits;
+    // Number section. Excel rejects a calendar prefix before digits (`B20.00`, `B1#,##0`);
+    // `B2General`, `B2@` and `B2"x"` show as without the prefix.
+    sec.invalid |= prefix.is_some() && sec.has_digits;
     let mut seen_point = false;
     let mut seen_exp = false;
     let mut seen_digit = false;

@@ -11,9 +11,22 @@ pub(crate) enum Calendar {
     Hijri,
 }
 
-/// Arabic names of the Hijri months, Muharram first.
-const HIJRI_MONTHS: [&str; 12] =
-    ["محرم", "صفر", "ربيع الأول", "ربيع الثاني", "جمادى الأولى", "جمادى الثانية", "رجب", "شعبان", "رمضان", "شوال", "ذو القعدة", "ذو الحجة"];
+/// Arabic names of the Hijri months, Muharram first. Two-word names are joined by a no-break
+/// space (U+00A0), as Excel writes them.
+const HIJRI_MONTHS: [&str; 12] = [
+    "محرم",
+    "صفر",
+    "ربيع\u{a0}الأول",
+    "ربيع\u{a0}الثاني",
+    "جمادى\u{a0}الأولى",
+    "جمادى\u{a0}الثانية",
+    "رجب",
+    "شعبان",
+    "رمضان",
+    "شوال",
+    "ذو\u{a0}القعدة",
+    "ذو\u{a0}الحجة",
+];
 
 /// Arabic weekday names, Sunday first, shown for `ddd` and `dddd` under `B2`.
 const ARABIC_WEEKDAYS: [&str; 7] = ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
