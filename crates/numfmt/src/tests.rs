@@ -903,8 +903,33 @@ fn b1_prefix_is_hidden_and_gregorian() {
 fn b2_prefix_renders_hijri_date() {
     assert_eq!(f("B2dd/mm/yyyy", JAN_1_2001), "06/10/1421");
     assert_eq!(f("b2d/m/yy", JAN_1_2001), "6/10/21");
-    assert_eq!(f("B2dddd dd/mm/yyyy hh:mm", JAN_1_2001 + 0.75), "Monday 06/10/1421 18:00");
+    assert_eq!(f("B2dddd dd/mm/yyyy hh:mm", JAN_1_2001 + 0.75), "الإثنين 06/10/1421 18:00");
     assert_eq!(text_function(&Value::Number(46314.0), "B2dd/mm/yyyy", S).as_deref(), Ok("08/05/1448"));
+    assert_eq!(f("B2e", 46314.0), "1448");
+    assert_eq!(f("B2ee", 46314.0), "1448");
+    assert_eq!(f("B2d/m/yyyy;@", 46314.0), "8/5/1448");
+}
+
+/// Under `B2`, Excel shows Arabic weekday names, the full name for `ddd` as well as `dddd`.
+#[test]
+fn b2_prefix_names_weekdays_in_arabic() {
+    // Monday 19 and Tuesday 20 October 2026.
+    assert_eq!(f("B2dddd", 46314.0), "الإثنين");
+    assert_eq!(f("B2ddd", 46314.0), "الإثنين");
+    assert_eq!(f("B2dddd", 46315.0), "الثلاثاء");
+    assert_eq!(f("B1dddd", 46314.0), "Monday");
+    assert_eq!(f("B1ddd", 46315.0), "Tue");
+    // Every weekday has a name.
+    for v in 46314..46321 {
+        assert!(!f("B2dddd", v as f64).is_empty());
+    }
+}
+
+/// `B2` on a General or text section changes nothing: Excel shows the plain serial.
+#[test]
+fn b2_prefix_on_general_and_text_sections() {
+    assert_eq!(f("B2General", 46314.0), "46314");
+    assert_eq!(f("B2@", 46314.0), "46314");
 }
 
 #[test]
@@ -926,25 +951,62 @@ fn b2_month_and_year_rollover() {
     assert_eq!(f("B2dd/mm/yyyy", 37684.0), "01/01/1424");
 }
 
+/// Excel honours `B2` after a colour tag, but a `[$-...]` locale tag before it keeps the date
+/// Gregorian (the prefix is still hidden); `B2[$-401]` is Hijri.
 #[test]
-fn calendar_prefix_after_locale_tag() {
-    assert_eq!(f("[$-401]B2dd/mm/yyyy", JAN_1_2001), "06/10/1421");
-    assert_eq!(f("[Red][$-401]B1dd/mm/yyyy", JAN_1_2001), "01/01/2001");
+fn calendar_prefix_and_bracket_tags() {
+    assert_eq!(f("[Red]B2dd/mm/yyyy", 46314.0), "08/05/1448");
     assert_eq!(f("[<0]0;B2dd/mm/yyyy", JAN_1_2001), "06/10/1421");
-    assert_eq!(f("dd \"B2\" yyyy", JAN_1_2001), "01 B2 2001");
-    assert_eq!(f("B3dd", JAN_1_2001), "B301");
+    assert_eq!(f("B2[$-401]dd/mm/yyyy", 46314.0), "08/05/1448");
+    for code in ["[$-401]B2dd/mm/yyyy", "[$-409]B2dd/mm/yyyy", "[$-1010401]B2dd/mm/yyyy", "[$-ar-SA]B2dd/mm/yyyy"] {
+        assert_eq!(f(code, 46314.0), "19/10/2026", "{code}");
+        assert_eq!(text_function(&Value::Number(46314.0), code, S).as_deref(), Ok("19/10/2026"), "{code}");
+    }
+    assert_eq!(f("[Red][$-401]B1dd/mm/yyyy", JAN_1_2001), "01/01/2001");
+}
+
+/// A quoted `B2` is literal text; any other unquoted `B` and digit makes Excel reject the code
+/// (`TEXT` is `#VALUE!`), as does `B2` before a number format. A rejected code shows as General.
+#[test]
+fn misplaced_calendar_prefix_is_rejected() {
+    assert_eq!(f("\"B2\"dd/mm/yyyy", 46314.0), "B219/10/2026");
+    assert_eq!(f("dd/\"B2\"/yyyy", 46314.0), "19/B2/2026");
+    assert_eq!(f("dd \\B2 yyyy", JAN_1_2001), "01 B2 2001");
+    for code in ["B3dd/mm/yyyy", "dd/mm/yyyyB2", "dd B2 mm", "B20.00", "0;B3dd"] {
+        assert_eq!(text_function(&Value::Number(46314.0), code, S), Err(CellError::Value), "{code}");
+        assert_eq!(f(code, 46314.0), "46314", "{code}");
+        assert!(NumberFormat::parse(code).is_general(), "{code}");
+    }
 }
 
 #[test]
-fn b2_before_epoch_does_not_panic() {
-    for v in [-1.0, 0.0, 60.0, 2958465.0, 2958466.0, 1e300, f64::NAN] {
-        let _ = f("B2dd/mm/yyyy mmmm", v);
+fn b2_edges_of_the_date_range() {
+    // Serial 60 is the 1900 system's fictitious 29 February: Excel has no Hijri date for it.
+    assert_eq!(text_function(&Value::Number(60.0), "B2dd/mm/yyyy", S), Err(CellError::Value));
+    assert_eq!(f("B2dd/mm/yyyy", 60.0), "########");
+    assert_eq!(f("B1dd/mm/yyyy", 60.0), "29/02/1900");
+    assert_eq!(f("B2dd/mm/yyyy", 59.0), "28/10/1317");
+    assert_eq!(f("B2dd/mm/yyyy", 61.0), "29/10/1317");
+    // Serial 0 shows as serial 1.
+    assert_eq!(f("B2dd/mm/yyyy", 0.0), "29/08/1317");
+    assert_eq!(f("B2dd/mm/yyyy", 1.0), "29/08/1317");
+    // No upper limit short of 31 December 9999: 16 and 17 November 2077, 31 December 9999.
+    assert_eq!(f("B2dd/mm/yyyy", 64970.0), "01/01/1501");
+    assert_eq!(f("B2dd/mm/yyyy", 64971.0), "02/01/1501");
+    assert_eq!(f("B2dd/mm/yyyy", 2958465.0), "03/04/9666");
+    // In the 1904 system, serial 60 is a real day.
+    assert_ne!(format_value(&Value::Number(60.0), &NumberFormat::parse("B2dd/mm/yyyy"), DateSystem::D1904).text, "########");
+}
+
+#[test]
+fn b2_out_of_range_does_not_panic() {
+    for v in [-1.0, 0.0, 60.0, 60.5, 2958465.0, 2958466.0, 1e300, f64::NAN] {
+        let _ = f("B2dd/mm/yyyy mmmm dddd", v);
+        let _ = text_function(&Value::Number(v), "B2dd/mm/yyyy mmmm dddd", S);
     }
     assert_eq!(f("B2dd/mm/yyyy", -1.0), f("dd/mm/yyyy", -1.0));
     assert_eq!(f("B2dd/mm/yyyy", 2958466.0), f("dd/mm/yyyy", 2958466.0));
-    assert_eq!(f("B2dd/mm/yyyy", 1.0), "29/08/1317");
-    assert_eq!(f("B2dd/mm/yyyy", 2958465.0), "03/04/9666");
+    // Before 1 Muharram 1 AH there is no Hijri date (no serial reaches it).
     let before_epoch = gridcraft_core::date::DateTime { year: 600, month: 3, day: 9, ..Default::default() };
-    let shown = calendar::Calendar::Hijri.date(&before_epoch);
-    assert_eq!((shown.year, shown.month, shown.day, shown.month_name), (600, 3, 9, "March"));
+    assert!(calendar::Calendar::Hijri.date(&before_epoch).is_none());
 }

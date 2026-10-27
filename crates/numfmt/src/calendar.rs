@@ -1,6 +1,6 @@
 //! Calendars a format section can show dates in: the `B1` (Gregorian) and `B2` (Hijri) prefixes.
 
-use gridcraft_core::date::{DateTime, MONTHS, days_from_civil};
+use gridcraft_core::date::{DateTime, MONTHS, WEEKDAYS, days_from_civil, days_in_month};
 
 /// The calendar a section's year, month and day parts count in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -15,7 +15,10 @@ pub(crate) enum Calendar {
 const HIJRI_MONTHS: [&str; 12] =
     ["محرم", "صفر", "ربيع الأول", "ربيع الثاني", "جمادى الأولى", "جمادى الثانية", "رجب", "شعبان", "رمضان", "شوال", "ذو القعدة", "ذو الحجة"];
 
-/// Year, month and day of a date in a section's calendar, with the month's names.
+/// Arabic weekday names, Sunday first, shown for `ddd` and `dddd` under `B2`.
+const ARABIC_WEEKDAYS: [&str; 7] = ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+
+/// Year, month and day of a date in a section's calendar, with the month and weekday names.
 pub(crate) struct CalendarDate {
     pub year: i64,
     pub month: u32,
@@ -24,22 +27,36 @@ pub(crate) struct CalendarDate {
     pub month_name: &'static str,
     /// `mmm`.
     pub month_short: &'static str,
+    /// `dddd`.
+    pub day_name: &'static str,
+    /// `ddd`.
+    pub day_short: &'static str,
 }
 
 impl Calendar {
-    /// The date of a Gregorian day in this calendar. A Hijri date that cannot be computed (before
-    /// 1 Muharram 1 AH) falls back to the Gregorian one.
-    pub(crate) fn date(self, dt: &DateTime) -> CalendarDate {
+    /// The date of a day in this calendar, `None` when it has none: under `B2`, the 1900 system's
+    /// fictitious 29 February 1900 (serial 60, which Excel shows as `#VALUE!`) and days before
+    /// 1 Muharram 1 AH.
+    pub(crate) fn date(self, dt: &DateTime) -> Option<CalendarDate> {
         match self {
-            Calendar::Hijri => hijri_date(dt).unwrap_or_else(|| gregorian_date(dt)),
-            Calendar::Gregorian => gregorian_date(dt),
+            Calendar::Hijri => hijri_date(dt),
+            Calendar::Gregorian => Some(gregorian_date(dt)),
         }
     }
 }
 
 fn gregorian_date(dt: &DateTime) -> CalendarDate {
     let month_name = MONTHS.get((dt.month as usize).wrapping_sub(1)).copied().unwrap_or("");
-    CalendarDate { year: dt.year.into(), month: dt.month, day: dt.day, month_name, month_short: month_name.get(..3).unwrap_or(month_name) }
+    let day_name = WEEKDAYS.get(dt.weekday as usize).copied().unwrap_or("");
+    CalendarDate {
+        year: dt.year.into(),
+        month: dt.month,
+        day: dt.day,
+        month_name,
+        month_short: month_name.get(..3).unwrap_or(month_name),
+        day_name,
+        day_short: day_name.get(..3).unwrap_or(day_name),
+    }
 }
 
 /// Days from 1 Muharram 1 AH to the first of a Hijri month. Leap years (30 days in the last
@@ -51,7 +68,12 @@ fn days_before_month(year: i64, month: i64) -> i64 {
 
 /// 1 Muharram 1 AH is 18 July 622 (proleptic Gregorian), so that 1 January 2001 is 6 Shawwal 1421.
 fn hijri_date(dt: &DateTime) -> Option<CalendarDate> {
-    let days = days_from_civil(dt.year, dt.month, dt.day) - days_from_civil(622, 7, 18);
+    // 29 February 1900 (serial 60) is no real day and has no Hijri date. The 1900 system's day 0
+    // (`1900-01-00`, serial 0) shows as 1 January 1900, as Excel shows it.
+    if dt.day > days_in_month(dt.year, dt.month) {
+        return None;
+    }
+    let days = days_from_civil(dt.year, dt.month, dt.day.max(1)) - days_from_civil(622, 7, 18);
     if days < 0 {
         return None;
     }
@@ -59,5 +81,15 @@ fn hijri_date(dt: &DateTime) -> Option<CalendarDate> {
     let month = ((11 * (days - days_before_month(year, 1)) + 330) / 325).clamp(1, 12);
     let day = days - days_before_month(year, month) + 1;
     let month_name = HIJRI_MONTHS.get(usize::try_from(month - 1).ok()?).copied()?;
-    Some(CalendarDate { year, month: u32::try_from(month).ok()?, day: u32::try_from(day).ok()?, month_name, month_short: month_name })
+    // Excel shows the full Arabic name for `ddd` as well as `dddd`, as it does for `mmm`.
+    let day_name = ARABIC_WEEKDAYS.get(dt.weekday as usize).copied()?;
+    Some(CalendarDate {
+        year,
+        month: u32::try_from(month).ok()?,
+        day: u32::try_from(day).ok()?,
+        month_name,
+        month_short: month_name,
+        day_name,
+        day_short: day_name,
+    })
 }

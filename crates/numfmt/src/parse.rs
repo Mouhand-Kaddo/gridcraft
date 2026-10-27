@@ -124,6 +124,9 @@ pub(crate) struct Section {
     pub currency: bool,
     pub fill: bool,
     pub calendar: Calendar,
+    /// Excel rejects the whole code because of this section: an unquoted `B` and digit that is
+    /// not a calendar prefix, or `B2` before a number format (`B20.00`).
+    pub invalid: bool,
 }
 
 /// Splits a code into sections at unquoted, unescaped, unbracketed semicolons.
@@ -254,34 +257,53 @@ struct Raw {
     cond: Option<Cond>,
     currency: bool,
     calendar: Calendar,
+    /// The section starts with `B2` (whether or not a locale tag cancels it).
+    hijri_prefix: bool,
+    /// An unquoted `B` and digit that is not a calendar prefix: Excel rejects the code.
+    invalid: bool,
 }
 
 /// Where a section's body starts: after its leading `[...]` tags, read as `tokenize` reads them.
-fn after_leading_brackets(cs: &[char]) -> usize {
+/// Also whether one of those tags is a `[$...]` locale tag.
+fn after_leading_brackets(cs: &[char]) -> (usize, bool) {
     let mut i = 0usize;
+    let mut locale = false;
     while cs.get(i) == Some(&'[') {
         match cs.get(i + 1..).and_then(|r| r.iter().position(|&d| d == ']')) {
-            Some(p) => i += p + 2,
+            Some(p) => {
+                locale |= cs.get(i + 1) == Some(&'$');
+                i += p + 2;
+            }
             None => break,
         }
     }
-    i
+    (i, locale)
 }
 
 fn tokenize(src: &str) -> Raw {
     let cs: Vec<char> = src.chars().collect();
-    let mut raw = Raw { toks: Vec::new(), color: None, cond: None, currency: false, calendar: Calendar::Gregorian };
+    let mut raw =
+        Raw { toks: Vec::new(), color: None, cond: None, currency: false, calendar: Calendar::Gregorian, hijri_prefix: false, invalid: false };
     let toks = &mut raw.toks;
     // With no `]` at or after a `[`, that `[` is a literal; checking this once keeps the scan linear.
     let last_close = cs.iter().rposition(|&c| c == ']');
-    let body_start = after_leading_brackets(&cs);
+    let (body_start, locale_first) = after_leading_brackets(&cs);
     let mut i = 0usize;
     while let Some(&c) = cs.get(i) {
         match c {
+            // A calendar prefix, never shown. Excel keeps the date Gregorian when a `[$-401]`-style
+            // locale tag comes before `B2` (`B2[$-401]` is still Hijri).
             'B' | 'b' if i == body_start && matches!(cs.get(i + 1), Some('1' | '2')) => {
-                raw.calendar = if cs.get(i + 1) == Some(&'2') { Calendar::Hijri } else { Calendar::Gregorian };
+                raw.hijri_prefix = cs.get(i + 1) == Some(&'2');
+                raw.calendar = if raw.hijri_prefix && !locale_first { Calendar::Hijri } else { Calendar::Gregorian };
                 i += 2;
                 continue;
+            }
+            // Any other unquoted `B` and digit (`B3dd`, `dd/mm/yyyyB2`, `dd B2 mm`) makes Excel
+            // reject the code.
+            'B' | 'b' if cs.get(i + 1).is_some_and(char::is_ascii_digit) => {
+                raw.invalid = true;
+                push_lit(toks, c.encode_utf8(&mut [0; 4]));
             }
             '"' => {
                 let mut s = String::new();
@@ -459,7 +481,7 @@ fn date_part(t: &Tok) -> Option<DatePart> {
 }
 
 fn analyze(raw: Raw) -> Section {
-    let Raw { mut toks, color, cond, currency, calendar } = raw;
+    let Raw { mut toks, color, cond, currency, calendar, hijri_prefix, invalid } = raw;
     let is_date = toks.iter().any(|t| matches!(t, Tok::Date(_)));
     let has_general = toks.iter().any(|t| matches!(t, Tok::General));
     let mut sec = Section {
@@ -477,6 +499,7 @@ fn analyze(raw: Raw) -> Section {
         currency,
         fill: toks.iter().any(|t| matches!(t, Tok::Fill(_))),
         calendar,
+        invalid,
     };
     if is_date {
         sec.kind = SecKind::Date;
@@ -543,7 +566,9 @@ fn analyze(raw: Raw) -> Section {
         sec.toks = out;
         return sec;
     }
-    // Number section.
+    // Number section. Excel rejects `B2` before digits (`B20.00`); `B2General` and `B2@` show the
+    // value as without the prefix.
+    sec.invalid |= hijri_prefix && sec.has_digits;
     let mut seen_point = false;
     let mut seen_exp = false;
     let mut seen_digit = false;

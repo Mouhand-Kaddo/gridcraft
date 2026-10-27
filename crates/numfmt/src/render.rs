@@ -1,7 +1,7 @@
 //! Rendering a value with a parsed section.
 
 use gridcraft_core::DateSystem;
-use gridcraft_core::date::{WEEKDAYS, datetime_from_serial, max_serial};
+use gridcraft_core::date::{datetime_from_serial, max_serial};
 
 use crate::decimal::{decimal_digits, fixed, fixed_from_digits, format_general_fit};
 use crate::parse::{DatePart, Section, Tok};
@@ -80,8 +80,8 @@ pub(crate) fn render_date(sec: &Section, v: f64, sys: DateSystem) -> Option<Out>
     let second = (ms / 1000) % 60;
     let milli = ms % 1000;
     let pad = |n: i64, w: u8| if w >= 2 { format!("{:0w$}", n, w = w.min(20) as usize) } else { n.to_string() };
-    let date = sec.calendar.date(&dt);
-    let day_name = WEEKDAYS.get(dt.weekday as usize).copied().unwrap_or("");
+    // No date in the section's calendar (serial 60 under `B2`): shown like an out-of-range date.
+    let date = sec.calendar.date(&dt)?;
     let mut out = Out::default();
     for t in &sec.toks {
         match t {
@@ -102,8 +102,8 @@ pub(crate) fn render_date(sec: &Section, v: f64, sys: DateSystem) -> Option<Out>
                     },
                     DatePart::Day(n) => match n {
                         1 | 2 => pad(date.day as i64, n),
-                        3 => day_name.chars().take(3).collect(),
-                        _ => day_name.to_string(),
+                        3 => date.day_short.to_string(),
+                        _ => date.day_name.to_string(),
                     },
                     DatePart::Hour(n) => {
                         let h = if ampm {
